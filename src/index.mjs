@@ -266,7 +266,11 @@ async function generateContentSchemaModels(documentJson, absModelsDir, existing)
   const seen = new Set(existing);
 
   for (const target of contentSchemaTargets(documentJson)) {
-    const component = target.component;
+    // `seen` holds emitted names, which Modelina may have renamed: comparing
+    // the document's own name would run this pass over a component the message
+    // pass already wrote and overwrite that model with a second reading of it.
+    const component =
+      matchModelName(target.component, [...seen]) ?? target.component;
     if (seen.has(component)) continue;
 
     const schema = contentSchemaDocument(target.schema, component);
@@ -300,8 +304,8 @@ async function generatePayloadParsers(documentJson, absPayloadsDir, modelNames) 
   for (const target of targets) {
     const source = renderPayloadParser({
       ...target,
-      message: matchModelName(target.message, modelNames) ?? target.message,
-      component: matchModelName(target.component, modelNames) ?? target.component,
+      messageModel: matchModelName(target.message, modelNames),
+      componentModel: matchModelName(target.component, modelNames),
     });
     const name = /export function (\w+)/.exec(source)[1];
     await fs.writeFile(
@@ -404,25 +408,36 @@ export function nameNestedSchemas(node) {
 }
 
 /** `parseXPayload` helper source for one contentSchema target. */
-export function renderPayloadParser({ message, property, component, required }) {
+export function renderPayloadParser({
+  message,
+  property,
+  component,
+  required,
+  // The models these two are emitted as, when Modelina renamed them. The
+  // function is still named after the document's own message name — that name
+  // is the export a consumer imports, and it should not move because a model
+  // got renamed.
+  messageModel = message,
+  componentModel = component,
+}) {
   const fnName = `parse${message}${property.replace(/(^|_)(\w)/g, (_, __, c) => c.toUpperCase())}`;
-  const returnType = required ? component : `${component} | undefined`;
+  const returnType = required ? componentModel : `${componentModel} | undefined`;
   const guard = required
     ? ""
     : `  if (message.${property} === undefined) return undefined;\n`;
 
-  return `import type {${message}} from '../models/${message}';
-import type {${component}} from '../models/${component}';
+  return `import type {${messageModel}} from '../models/${messageModel}';
+import type {${componentModel}} from '../models/${componentModel}';
 
 /**
- * Decodes the JSON string in \`${message}.${property}\`.
+ * Decodes the JSON string in \`${messageModel}.${property}\`.
  *
  * The wire value is a string; the contract declares its decoded shape through
  * \`contentSchema\`. Generated so the cast lives in one place instead of at
  * every call site.
  */
-export function ${fnName}(message: ${message}): ${returnType} {
-${guard}  return JSON.parse(message.${property} as string) as ${component};
+export function ${fnName}(message: ${messageModel}): ${returnType} {
+${guard}  return JSON.parse(message.${property} as string) as ${componentModel};
 }
 `;
 }

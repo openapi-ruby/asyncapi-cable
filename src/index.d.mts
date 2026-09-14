@@ -61,7 +61,12 @@ export function contentSchemaDocument(
 ): Record<string, unknown> | undefined;
 export function nameNestedSchemas<T>(node: T): T;
 export function renderPayloadParser(
-  target: Omit<ContentSchemaTarget, "schema">
+  target: Omit<ContentSchemaTarget, "schema"> & {
+    /** Model `message` was emitted as, when Modelina renamed it. */
+    messageModel?: string;
+    /** Model `component` was emitted as, when Modelina renamed it. */
+    componentModel?: string;
+  }
 ): string;
 
 export function renderChannelClass(opts: {

@@ -23,6 +23,7 @@ import {
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "cable_fixture.yaml");
 const SERVER_FIXTURE = join(import.meta.dirname, "fixtures", "server_param_fixture.yaml");
+const RESERVED_FIXTURE = join(import.meta.dirname, "fixtures", "reserved_name_fixture.yaml");
 
 /** Run the generator into a throwaway dir and hand the reader to `fn`. */
 async function withGenerated(opts, fn) {
@@ -466,13 +467,46 @@ test("renderPayloadParser guards an optional payload and casts a required one", 
 });
 
 test("a message named after a TypeScript keyword reaches its renamed model", async () => {
-  await withGenerated({}, (read) => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
     const channel = read("channels/ImportChannel.ts");
     assert.ok(
       channel.includes('import type { ReservedImport } from "../models/ReservedImport";')
     );
-    assert.ok(channel.includes("export type ImportData = ReservedImport;"));
+    assert.ok(channel.includes("ReservedImport | Wrapper | ReservedInterface"));
   });
+});
+
+test("a payload parser keeps its message name and imports the renamed model", async () => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
+    // The function is the export a consumer imports: naming it after the model
+    // would move `parseImportPayload` to `parseReservedImportPayload`.
+    const parser = read("payloads/parseImportPayload.ts");
+    assert.ok(parser.includes("export function parseImportPayload(message: ReservedImport)"));
+    assert.ok(parser.includes("import type {ReservedImport} from '../models/ReservedImport';"));
+  });
+});
+
+test("a contentSchema leaves a component the message pass already emitted alone", async () => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
+    // `Interface` is emitted as `ReservedInterface`, so matching the document's
+    // own name against the emitted ones would miss it and overwrite the model
+    // with a second reading of the same component.
+    assert.ok(!read("index.ts").includes("models/Nested"));
+    assert.ok(read("models/ReservedInterface.ts").includes("marker: string;"));
+  });
+});
+
+test("renderPayloadParser names the function after the message, not the model", () => {
+  const source = renderPayloadParser({
+    message: "Import",
+    property: "payload",
+    component: "Rendered",
+    required: true,
+    messageModel: "ReservedImport",
+  });
+
+  assert.match(source, /export function parseImportPayload\(message: ReservedImport\)/);
+  assert.match(source, /import type \{ReservedImport\} from '\.\.\/models\/ReservedImport';/);
 });
 
 test("generateOne emits models and a parser for a contentSchema payload", async () => {
