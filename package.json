@@ -1,6 +1,6 @@
 {
   "name": "asyncapi-cable",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Generate typed AnyCable channel clients from an AsyncAPI 3.0 document (Vue + React presets).",
   "type": "module",
   "license": "MIT",
