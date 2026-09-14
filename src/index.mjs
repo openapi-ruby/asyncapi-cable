@@ -24,6 +24,7 @@
 // are also exported for programmatic use.
 import {
   TypeScriptFileGenerator,
+  typeScriptDefaultModelNameConstraints,
   typeScriptDefaultPropertyKeyConstraints,
 } from "@asyncapi/modelina";
 import { Parser } from "@asyncapi/parser";
@@ -278,7 +279,7 @@ async function generateContentSchemaModels(documentJson, absModelsDir, existing)
 }
 
 /** One `parseXPayload` module per contentSchema target. */
-async function generatePayloadParsers(documentJson, absPayloadsDir) {
+async function generatePayloadParsers(documentJson, absPayloadsDir, modelNames) {
   const targets = contentSchemaTargets(documentJson);
   if (targets.length === 0) return [];
 
@@ -286,7 +287,11 @@ async function generatePayloadParsers(documentJson, absPayloadsDir) {
 
   const written = [];
   for (const target of targets) {
-    const source = renderPayloadParser(target);
+    const source = renderPayloadParser({
+      ...target,
+      message: matchModelName(target.message, modelNames) ?? target.message,
+      component: matchModelName(target.component, modelNames) ?? target.component,
+    });
     const name = /export function (\w+)/.exec(source)[1];
     await fs.writeFile(
       path.join(absPayloadsDir, `${name}.ts`),
@@ -513,15 +518,35 @@ export function ${composableName}(
   return { composableName, source };
 }
 
+const constrainModelName = typeScriptDefaultModelNameConstraints();
+
+/**
+ * Match a name from the document against the emitted model names.
+ *
+ * Modelina renames a model whose name TypeScript will not take — a message
+ * named `Import` is emitted as `ReservedImport`, `2fast` as `Number_2fast` —
+ * so a name that does not match verbatim is put through the same constraint
+ * before giving up, or the channel imports a module nobody wrote.
+ */
+export function matchModelName(name, modelNames) {
+  if (modelNames.includes(name)) return name;
+  const constrained = constrainModelName({ modelName: name });
+  return modelNames.includes(constrained) ? constrained : undefined;
+}
+
 /** Match an operation message to the Modelina-generated model name for its payload. */
 function resolveMessageModelName(message, modelNames) {
   const candidates = [message.id?.(), message.name?.()].filter(Boolean);
   for (const candidate of candidates) {
-    if (modelNames.includes(candidate)) return candidate;
+    const match = matchModelName(candidate, modelNames);
+    if (match) return match;
   }
   const payload = message.payload?.();
   const payloadId = payload?.id?.() ?? payload?.$id?.();
-  if (payloadId && modelNames.includes(payloadId)) return payloadId;
+  if (payloadId) {
+    const match = matchModelName(payloadId, modelNames);
+    if (match) return match;
+  }
   return candidates[0] ?? payloadId;
 }
 
@@ -644,7 +669,8 @@ export async function generateOne({
   );
   const payloadParsers = await generatePayloadParsers(
     documentJson,
-    path.join(absOutDir, "payloads")
+    path.join(absOutDir, "payloads"),
+    modelNames
   );
   await writeBarrel(absOutDir, modelNames, channels, payloadParsers);
 

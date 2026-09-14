@@ -14,6 +14,12 @@ channels:
         $ref: "#/components/messages/WidgetStatusMessage"
       WidgetActionMessage:
         $ref: "#/components/messages/WidgetActionMessage"
+  Import:
+    address: "imports"
+    x-actioncable-channel: "Widgets::ImportsChannel"
+    messages:
+      Import:
+        $ref: "#/components/messages/Import"
 operations:
   receiveWidgetStatus:
     action: receive
@@ -22,6 +28,12 @@ operations:
     messages:
       - $ref: "#/channels/WidgetStatus/messages/WidgetStatusMessage"
       - $ref: "#/channels/WidgetStatus/messages/WidgetActionMessage"
+  receiveImport:
+    action: receive
+    channel:
+      $ref: "#/channels/Import"
+    messages:
+      - $ref: "#/channels/Import/messages/Import"
 components:
   schemas:
     WidgetActionEnum:
@@ -66,6 +78,14 @@ components:
           type: string
       required: [name, status]
       additionalProperties: true
+    Import:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+      required: [id, status]
     WidgetRendered:
       type: object
       properties:
@@ -85,3 +105,6 @@ components:
     WidgetActionMessage:
       payload:
         $ref: "#/components/schemas/WidgetActionMessage"
+    Import:
+      payload:
+        $ref: "#/components/schemas/Import"

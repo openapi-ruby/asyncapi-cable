@@ -33,6 +33,10 @@ export function isRemoteInput(input: string): boolean;
 export function stripConditionals<T extends AsyncapiDocumentJson>(json: T): T;
 export function dedupeUnions(source: string): string;
 export function tidyModelSource(source: string): string;
+export function matchModelName(
+  name: string,
+  modelNames: string[]
+): string | undefined;
 export function clientParamsType(channelJson: ChannelParametersJson): string;
 
 export interface ContentSchemaTarget {

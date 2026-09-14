@@ -14,6 +14,7 @@ import {
   nameNestedSchemas,
   renderPayloadParser,
   isRemoteInput,
+  matchModelName,
   renderChannelClass,
   renderComposable,
   stripConditionals,
@@ -110,6 +111,14 @@ test("tidyModelSource rewrites additionalProperties + type-only exports", () => 
   );
   assert.ok(tidied.includes("[key: string]: unknown;"));
   assert.ok(tidied.includes("export type { X };"));
+});
+
+test("matchModelName finds the model Modelina renamed", () => {
+  // A message named after a TypeScript keyword is emitted as `ReservedImport`,
+  // so matching the document's own name verbatim imports a module nobody wrote.
+  assert.equal(matchModelName("Import", ["ReservedImport"]), "ReservedImport");
+  assert.equal(matchModelName("Widget", ["Widget", "ReservedWidget"]), "Widget");
+  assert.equal(matchModelName("Widget", ["Gadget"]), undefined);
 });
 
 test("clientParamsType excludes server-derived params", () => {
@@ -437,6 +446,16 @@ test("renderPayloadParser guards an optional payload and casts a required one", 
   });
   assert.match(required, /export function parseMsgPayload\(message: Msg\): Rendered\b/);
   assert.doesNotMatch(required, /=== undefined/);
+});
+
+test("a message named after a TypeScript keyword reaches its renamed model", async () => {
+  await withGenerated({}, (read) => {
+    const channel = read("channels/ImportChannel.ts");
+    assert.ok(
+      channel.includes('import type { ReservedImport } from "../models/ReservedImport";')
+    );
+    assert.ok(channel.includes("export type ImportData = ReservedImport;"));
+  });
 });
 
 test("generateOne emits models and a parser for a contentSchema payload", async () => {
