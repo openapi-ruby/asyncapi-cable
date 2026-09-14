@@ -1,8 +1,9 @@
 // Generates typed AnyCable client code from the cable AsyncAPI documents.
 //
 // For each configured document it emits, under the output directory:
-//   models/*.ts        — message payload interfaces + enums, the latter as string
-//                        literal unions (via @asyncapi/modelina)
+//   models/*.ts        — message payload interfaces + enums (via @asyncapi/modelina);
+//                        `output.enumType: "union"` emits an enum as a string
+//                        literal union instead
 //   channels/*.ts      — one `Channel<Params, Message>` subclass per operation;
 //                        depends ONLY on @anycable/core (platform-agnostic — works
 //                        on web AND React Native) + the models. Together with
@@ -31,6 +32,17 @@ import {
 import { Parser } from "@asyncapi/parser";
 import fs from "node:fs/promises";
 import path from "node:path";
+
+/**
+ * How an enum is emitted.
+ *
+ * A cable message is usually the same component a REST schema documents, and an
+ * enum member is *nominal*: `StatusEnum.STARTED` from these models is not
+ * assignable to the literal union an OpenAPI client generates for the very same
+ * values, so a payload handed on to code typed by that client needs a cast.
+ * `"union"` makes the two generated worlds share their types.
+ */
+const ENUM_TYPES = ["enum", "union"];
 
 /** Fallback cable seam when a target omits `output.cable`. */
 const DEFAULT_CABLE = { path: "../internalCableClient", name: "getCable" };
@@ -183,7 +195,7 @@ export function dedupeUnions(source) {
   );
 }
 
-export function tidyModelSource(source) {
+export function tidyModelSource(source, { typeOnlyImports = false } = {}) {
   let out = dedupeUnions(source)
     // Represent `additionalProperties: true` as a real index signature.
     .replace(
@@ -191,33 +203,27 @@ export function tidyModelSource(source) {
       "  [key: string]: unknown;"
     )
     .trimStart();
-  // Interfaces and type aliases are type-only: `isolatedModules` requires
-  // `export type` for their re-export, and a sibling model is imported for its
-  // type alone — `verbatimModuleSyntax` rejects a value import of one.
+  // Interfaces and type aliases are type-only; `isolatedModules` requires
+  // `export type` for their re-export. Enums are values — leave those alone.
   if (!/\benum\s+\w+/.test(out)) {
-    out = out.replace(
-      /^import \{(.+)\} from '(\.\/[^']+)';$/gm,
-      "import type {$1} from '$2';"
-    );
+    if (typeOnlyImports) {
+      // `verbatimModuleSyntax` rejects a value import of a type.
+      out = out.replace(
+        /^import \{(.+)\} from '(\.\/[^']+)';$/gm,
+        "import type {$1} from '$2';"
+      );
+    }
     out = out.replace(/^export \{ (\w+) \};?$/m, "export type { $1 };");
   }
   return out;
 }
 
-/**
- * The Modelina setup both model passes share.
- *
- * `enumType: "union"` because an enum member is *nominal*: a cable message is
- * usually the same component a REST schema documents, so `StatusEnum.STARTED`
- * from these models would not be assignable to the literal union an OpenAPI
- * client generates for the very same values, and every payload handed on to
- * code typed by that client would need a cast.
- */
-function modelGenerator() {
+/** The Modelina setup both model passes share. */
+function modelGenerator(enumType) {
   return new TypeScriptFileGenerator({
     modelType: "interface",
     mapType: "record",
-    enumType: "union",
+    enumType,
     // Preserve the snake_case wire keys (user_id, error_message) instead of
     // camelizing — cable payloads are not transformed on the socket path.
     // Keep the default reserved-word/special-char safety, override only casing.
@@ -232,23 +238,28 @@ function modelGenerator() {
   });
 }
 
-async function generateModels(document, absModelsDir) {
-  const generator = modelGenerator();
+async function generateModels(document, absModelsDir, enumType) {
+  const generator = modelGenerator(enumType);
   const input = stripConditionals(structuredClone(document.json()));
   const models = await generator.generateToFiles(input, absModelsDir, {
     exportType: "named",
   });
 
-  await tidyModelFiles(models, absModelsDir);
+  await tidyModelFiles(models, absModelsDir, enumType);
 
   return models.map((m) => m.modelName);
 }
 
-async function tidyModelFiles(models, absModelsDir) {
+async function tidyModelFiles(models, absModelsDir, enumType) {
   for (const model of models) {
     const file = path.join(absModelsDir, `${model.modelName}.ts`);
     const src = await fs.readFile(file, "utf8");
-    await fs.writeFile(file, `${BANNER}\n${tidyModelSource(src)}`);
+    const tidied = tidyModelSource(src, {
+      // Nothing a model file declares is a value once enums are unions, so a
+      // sibling is imported for its type alone.
+      typeOnlyImports: enumType === "union",
+    });
+    await fs.writeFile(file, `${BANNER}\n${tidied}`);
   }
 }
 
@@ -259,8 +270,13 @@ async function tidyModelFiles(models, absModelsDir) {
  * AsyncAPI processor only walks message payloads, so these components are
  * invisible to it no matter how the document references them.
  */
-async function generateContentSchemaModels(documentJson, absModelsDir, existing) {
-  const generator = modelGenerator();
+async function generateContentSchemaModels(
+  documentJson,
+  absModelsDir,
+  existing,
+  enumType
+) {
+  const generator = modelGenerator(enumType);
 
   const generated = [];
   const seen = new Set(existing);
@@ -281,7 +297,7 @@ async function generateContentSchemaModels(documentJson, absModelsDir, existing)
       absModelsDir,
       {exportType: "named"}
     );
-    await tidyModelFiles(models, absModelsDir);
+    await tidyModelFiles(models, absModelsDir, enumType);
 
     for (const model of models) {
       if (seen.has(model.modelName)) continue;
@@ -659,8 +675,14 @@ export async function generateOne({
   outDir,
   cable = DEFAULT_CABLE,
   preset = "vue",
+  enumType = "enum",
   cwd = process.cwd(),
 }) {
+  if (!ENUM_TYPES.includes(enumType)) {
+    throw new Error(
+      `Unknown enumType "${enumType}" — expected ${ENUM_TYPES.join(" or ")}`
+    );
+  }
   // A URL input is fetched as-is; a local path is resolved against cwd
   // (`path.resolve` passes absolute paths through, so tests can target a tmp dir).
   const absInput = isRemoteInput(input) ? input : path.resolve(cwd, input);
@@ -673,13 +695,15 @@ export async function generateOne({
   const documentJson = document.json();
   const modelNames = await generateModels(
     document,
-    path.join(absOutDir, "models")
+    path.join(absOutDir, "models"),
+    enumType
   );
   modelNames.push(
     ...(await generateContentSchemaModels(
       documentJson,
       path.join(absOutDir, "models"),
-      modelNames
+      modelNames,
+      enumType
     ))
   );
   const channels = await generateChannels(
@@ -715,6 +739,7 @@ export async function generateAll(config, cwd = process.cwd()) {
       outDir: target.output.target,
       cable: target.output.cable ?? DEFAULT_CABLE,
       preset: target.output.preset ?? "vue",
+      enumType: target.output.enumType ?? "enum",
       cwd,
     });
   }

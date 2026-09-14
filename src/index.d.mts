@@ -3,6 +3,13 @@
 
 export type CablePreset = "vue" | "react";
 
+/**
+ * How an enum is emitted: a TypeScript `enum` (default) or a string literal
+ * union. Union members are assignable to the literal union an OpenAPI client
+ * generates for the same component; enum members, being nominal, are not.
+ */
+export type CableEnumType = "enum" | "union";
+
 export interface CableMutator {
   path: string;
   name: string;
@@ -11,7 +18,12 @@ export interface CableMutator {
 export interface CableTarget {
   /** Path to a local AsyncAPI 3.0 document, or an http(s) URL to fetch it from. */
   input: string;
-  output: { target: string; cable?: CableMutator; preset?: CablePreset };
+  output: {
+    target: string;
+    cable?: CableMutator;
+    preset?: CablePreset;
+    enumType?: CableEnumType;
+  };
 }
 
 export type CableConfig = Record<string, CableTarget>;
@@ -32,7 +44,10 @@ export interface ChannelParametersJson {
 export function isRemoteInput(input: string): boolean;
 export function stripConditionals<T extends AsyncapiDocumentJson>(json: T): T;
 export function dedupeUnions(source: string): string;
-export function tidyModelSource(source: string): string;
+export function tidyModelSource(
+  source: string,
+  options?: { typeOnlyImports?: boolean }
+): string;
 export function matchModelName(
   name: string,
   modelNames: string[]
@@ -89,6 +104,7 @@ export function generateOne(opts: {
   outDir: string;
   cable?: CableMutator;
   preset?: CablePreset;
+  enumType?: CableEnumType;
   cwd?: string;
 }): Promise<void>;
 

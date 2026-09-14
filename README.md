@@ -88,14 +88,13 @@ The config is a map of *target name* → target. Each target:
 | `output.cable.path` | | Import path (from `runtime.ts`) to the file exporting your AnyCable getter |
 | `output.cable.name` | | Named export of that getter (defaults to a built-in seam if `cable` is omitted) |
 | `output.preset` | | `"vue"` (default) or `"react"` |
+| `output.enumType` | | `"enum"` (default) or `"union"` — see [Enums](#enums) |
 
 ## What it emits
 
 ```
 <output.target>/
   models/*.ts        message payload types + enums (via @asyncapi/modelina)
-                     — an enum is a string literal union, assignable to the
-                     one an OpenAPI client writes for the same component
   channels/*.ts      class XChannel extends Channel<Params, Message>
                      — depends ONLY on @anycable/core (web + React Native)
   runtime.ts         the preset's subscribe/lifecycle helper — the ONLY file
@@ -107,6 +106,22 @@ The config is a map of *target name* → target. Each target:
 The channel classes and message types are **shared across presets**; only
 `runtime.ts` and the per-channel wrapper differ (`vue` → composable with
 `onScopeDispose`; `react` → hook with `useEffect`).
+
+### Enums
+
+By default an enum is a TypeScript `enum`. An enum member is *nominal*, though,
+and a cable message is usually the same component a REST schema documents — so
+`StatusEnum.STARTED` from these models is **not** assignable to the literal
+union an OpenAPI client (Orval, openapi-typescript, …) generates for the very
+same values, and every payload handed on to code typed by that client needs a
+cast. Set `output.enumType: "union"` to emit
+
+```ts
+type StatusEnum = "started" | "finished";
+```
+
+instead, and the two generated worlds share their types. Model files then import
+their siblings with `import type`, since nothing they declare is a value.
 
 ### The cable mutator
 
