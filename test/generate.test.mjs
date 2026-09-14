@@ -115,12 +115,17 @@ test("tidyModelSource rewrites additionalProperties + type-only exports", () => 
 });
 
 test("tidyModelSource imports a sibling model for its type only", () => {
-  // Every model is type-only now that enums are unions — a value import of one
-  // is an error under `verbatimModuleSyntax`.
-  const tidied = tidyModelSource(
-    "import {Y} from './Y';\ninterface X {\n  y: Y;\n}\nexport { X };"
+  // Every model is type-only once enums are unions — a value import of one is
+  // an error under `verbatimModuleSyntax`.
+  const source = "import {Y} from './Y';\ninterface X {\n  y: Y;\n}\nexport { X };";
+
+  assert.ok(
+    tidyModelSource(source, { typeOnlyImports: true }).includes(
+      "import type {Y} from './Y';"
+    )
   );
-  assert.ok(tidied.includes("import type {Y} from './Y';"));
+  // An enum is a value, so the import stays one by default.
+  assert.ok(tidyModelSource(source).includes("import {Y} from './Y';"));
 });
 
 test("matchModelName finds the model Modelina renamed", () => {
@@ -242,13 +247,8 @@ test("vue preset: snake_case types, portable class, seam only in runtime", async
     assert.ok(message.includes("status: string;"));
     assert.ok(!message.includes("'failed'"));
 
-    const action = read("models/WidgetActionEnum.ts");
-    // A union, not a TypeScript `enum`: an enum member is nominal and would not
-    // be assignable to the literal union an OpenAPI client writes for the same
-    // component.
-    assert.ok(action.includes('type WidgetActionEnum = "build" | "tear_down";'));
-    assert.ok(!/\benum\s+WidgetActionEnum/.test(action));
-    assert.ok(message.includes("import type {WidgetActionEnum}"));
+    assert.ok(read("models/WidgetActionEnum.ts").includes("enum WidgetActionEnum"));
+    assert.ok(message.includes("import {WidgetActionEnum}"));
 
     const channel = read("channels/WidgetStatusChannel.ts");
     assert.ok(channel.includes('import { Channel } from "@anycable/core";'));
@@ -260,6 +260,38 @@ test("vue preset: snake_case types, portable class, seam only in runtime", async
     const composable = read("composables/useWidgetStatusChannel.ts");
     assert.ok(!composable.includes("getCable"));
   });
+});
+
+test('enumType: "union" emits a literal union and type-only imports', async () => {
+  await withGenerated({ enumType: "union" }, (read) => {
+    // An enum member is nominal: `WidgetActionEnum.BUILD` is not assignable to
+    // the literal union an OpenAPI client writes for the same component.
+    const action = read("models/WidgetActionEnum.ts");
+    assert.ok(action.includes('type WidgetActionEnum = "build" | "tear_down";'));
+    assert.ok(!/\benum\s+WidgetActionEnum/.test(action));
+    assert.ok(action.includes("export type { WidgetActionEnum };"));
+
+    // Nothing a model declares is a value any more.
+    assert.ok(
+      read("models/WidgetStatusMessage.ts").includes(
+        "import type {WidgetActionEnum} from './WidgetActionEnum';"
+      )
+    );
+  });
+});
+
+test('enumType: "union" reaches the contentSchema pass too', async () => {
+  await withGenerated({ enumType: "union" }, (read) => {
+    // That pass carries its own Modelina generator.
+    assert.ok(read("models/WidgetKindEnum.ts").includes('type WidgetKindEnum = "chart" | "table";'));
+  });
+});
+
+test("an unknown enumType is refused", async () => {
+  await assert.rejects(
+    () => generateOne({ input: FIXTURE, outDir: mkdtempSync(join(tmpdir(), "asyncapi-cable-")), enumType: "literals" }),
+    /Unknown enumType "literals"/
+  );
 });
 
 test("configured cable mutator drives runtime.ts", async () => {
