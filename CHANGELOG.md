@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/openapi-ruby/asyncapi-cable/compare/asyncapi-cable-v0.2.3...asyncapi-cable-v0.3.0) (2026-09-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* an enum is a union rather than a TypeScript `enum`, so `StatusEnum.STARTED` no longer resolves; use the literal `"started"`.
+
+### Features
+
+* generate models and a parser for a contentSchema payload ([#25](https://github.com/openapi-ruby/asyncapi-cable/issues/25)) ([273820d](https://github.com/openapi-ruby/asyncapi-cable/commit/273820df781efe1dc28122430aa20f511f681f4c))
+* make the union enum an option, and keep 0.x on minor bumps ([#28](https://github.com/openapi-ruby/asyncapi-cable/issues/28)) ([905c850](https://github.com/openapi-ruby/asyncapi-cable/commit/905c850dab4f59118c8ea5ef1a0002129d3967bc))
+
+
+### Bug Fixes
+
+* resolve renamed models, and emit enums as unions ([#27](https://github.com/openapi-ruby/asyncapi-cable/issues/27)) ([1276ecc](https://github.com/openapi-ruby/asyncapi-cable/commit/1276ecc70249796386ebf3822f36422cb2da3b08))
+
 ## [0.2.3](https://github.com/openapi-ruby/asyncapi-cable/compare/asyncapi-cable-v0.2.2...asyncapi-cable-v0.2.3) (2026-08-26)
 
 
