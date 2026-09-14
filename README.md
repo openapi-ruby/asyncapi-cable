@@ -94,6 +94,8 @@ The config is a map of *target name* → target. Each target:
 ```
 <output.target>/
   models/*.ts        message payload types + enums (via @asyncapi/modelina)
+                     — an enum is a string literal union, assignable to the
+                     one an OpenAPI client writes for the same component
   channels/*.ts      class XChannel extends Channel<Params, Message>
                      — depends ONLY on @anycable/core (web + React Native)
   runtime.ts         the preset's subscribe/lifecycle helper — the ONLY file

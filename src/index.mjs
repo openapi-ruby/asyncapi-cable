@@ -1,7 +1,8 @@
 // Generates typed AnyCable client code from the cable AsyncAPI documents.
 //
 // For each configured document it emits, under the output directory:
-//   models/*.ts        — message payload interfaces + enums (via @asyncapi/modelina)
+//   models/*.ts        — message payload interfaces + enums, the latter as string
+//                        literal unions (via @asyncapi/modelina)
 //   channels/*.ts      — one `Channel<Params, Message>` subclass per operation;
 //                        depends ONLY on @anycable/core (platform-agnostic — works
 //                        on web AND React Native) + the models. Together with
@@ -24,6 +25,7 @@
 // are also exported for programmatic use.
 import {
   TypeScriptFileGenerator,
+  typeScriptDefaultModelNameConstraints,
   typeScriptDefaultPropertyKeyConstraints,
 } from "@asyncapi/modelina";
 import { Parser } from "@asyncapi/parser";
@@ -189,18 +191,33 @@ export function tidyModelSource(source) {
       "  [key: string]: unknown;"
     )
     .trimStart();
-  // Interfaces and type aliases are type-only; `isolatedModules` requires
-  // `export type` for their re-export. Enums are values — leave those alone.
+  // Interfaces and type aliases are type-only: `isolatedModules` requires
+  // `export type` for their re-export, and a sibling model is imported for its
+  // type alone — `verbatimModuleSyntax` rejects a value import of one.
   if (!/\benum\s+\w+/.test(out)) {
+    out = out.replace(
+      /^import \{(.+)\} from '(\.\/[^']+)';$/gm,
+      "import type {$1} from '$2';"
+    );
     out = out.replace(/^export \{ (\w+) \};?$/m, "export type { $1 };");
   }
   return out;
 }
 
-async function generateModels(document, absModelsDir) {
-  const generator = new TypeScriptFileGenerator({
+/**
+ * The Modelina setup both model passes share.
+ *
+ * `enumType: "union"` because an enum member is *nominal*: a cable message is
+ * usually the same component a REST schema documents, so `StatusEnum.STARTED`
+ * from these models would not be assignable to the literal union an OpenAPI
+ * client generates for the very same values, and every payload handed on to
+ * code typed by that client would need a cast.
+ */
+function modelGenerator() {
+  return new TypeScriptFileGenerator({
     modelType: "interface",
     mapType: "record",
+    enumType: "union",
     // Preserve the snake_case wire keys (user_id, error_message) instead of
     // camelizing — cable payloads are not transformed on the socket path.
     // Keep the default reserved-word/special-char safety, override only casing.
@@ -213,6 +230,10 @@ async function generateModels(document, absModelsDir) {
       }),
     },
   });
+}
+
+async function generateModels(document, absModelsDir) {
+  const generator = modelGenerator();
   const input = stripConditionals(structuredClone(document.json()));
   const models = await generator.generateToFiles(input, absModelsDir, {
     exportType: "named",
@@ -239,22 +260,17 @@ async function tidyModelFiles(models, absModelsDir) {
  * invisible to it no matter how the document references them.
  */
 async function generateContentSchemaModels(documentJson, absModelsDir, existing) {
-  const generator = new TypeScriptFileGenerator({
-    modelType: "interface",
-    mapType: "record",
-    constraints: {
-      propertyKey: typeScriptDefaultPropertyKeyConstraints({
-        NAMING_FORMATTER: (name) => name,
-        NO_RESERVED_KEYWORDS: (name) => name,
-      }),
-    },
-  });
+  const generator = modelGenerator();
 
   const generated = [];
   const seen = new Set(existing);
 
   for (const target of contentSchemaTargets(documentJson)) {
-    const component = target.component;
+    // `seen` holds emitted names, which Modelina may have renamed: comparing
+    // the document's own name would run this pass over a component the message
+    // pass already wrote and overwrite that model with a second reading of it.
+    const component =
+      matchModelName(target.component, [...seen]) ?? target.component;
     if (seen.has(component)) continue;
 
     const schema = contentSchemaDocument(target.schema, component);
@@ -278,7 +294,7 @@ async function generateContentSchemaModels(documentJson, absModelsDir, existing)
 }
 
 /** One `parseXPayload` module per contentSchema target. */
-async function generatePayloadParsers(documentJson, absPayloadsDir) {
+async function generatePayloadParsers(documentJson, absPayloadsDir, modelNames) {
   const targets = contentSchemaTargets(documentJson);
   if (targets.length === 0) return [];
 
@@ -286,7 +302,11 @@ async function generatePayloadParsers(documentJson, absPayloadsDir) {
 
   const written = [];
   for (const target of targets) {
-    const source = renderPayloadParser(target);
+    const source = renderPayloadParser({
+      ...target,
+      messageModel: matchModelName(target.message, modelNames),
+      componentModel: matchModelName(target.component, modelNames),
+    });
     const name = /export function (\w+)/.exec(source)[1];
     await fs.writeFile(
       path.join(absPayloadsDir, `${name}.ts`),
@@ -388,25 +408,36 @@ export function nameNestedSchemas(node) {
 }
 
 /** `parseXPayload` helper source for one contentSchema target. */
-export function renderPayloadParser({ message, property, component, required }) {
+export function renderPayloadParser({
+  message,
+  property,
+  component,
+  required,
+  // The models these two are emitted as, when Modelina renamed them. The
+  // function is still named after the document's own message name — that name
+  // is the export a consumer imports, and it should not move because a model
+  // got renamed.
+  messageModel = message,
+  componentModel = component,
+}) {
   const fnName = `parse${message}${property.replace(/(^|_)(\w)/g, (_, __, c) => c.toUpperCase())}`;
-  const returnType = required ? component : `${component} | undefined`;
+  const returnType = required ? componentModel : `${componentModel} | undefined`;
   const guard = required
     ? ""
     : `  if (message.${property} === undefined) return undefined;\n`;
 
-  return `import type {${message}} from '../models/${message}';
-import type {${component}} from '../models/${component}';
+  return `import type {${messageModel}} from '../models/${messageModel}';
+import type {${componentModel}} from '../models/${componentModel}';
 
 /**
- * Decodes the JSON string in \`${message}.${property}\`.
+ * Decodes the JSON string in \`${messageModel}.${property}\`.
  *
  * The wire value is a string; the contract declares its decoded shape through
  * \`contentSchema\`. Generated so the cast lives in one place instead of at
  * every call site.
  */
-export function ${fnName}(message: ${message}): ${returnType} {
-${guard}  return JSON.parse(message.${property} as string) as ${component};
+export function ${fnName}(message: ${messageModel}): ${returnType} {
+${guard}  return JSON.parse(message.${property} as string) as ${componentModel};
 }
 `;
 }
@@ -513,15 +544,35 @@ export function ${composableName}(
   return { composableName, source };
 }
 
+const constrainModelName = typeScriptDefaultModelNameConstraints();
+
+/**
+ * Match a name from the document against the emitted model names.
+ *
+ * Modelina renames a model whose name TypeScript will not take — a message
+ * named `Import` is emitted as `ReservedImport`, `2fast` as `Number_2fast` —
+ * so a name that does not match verbatim is put through the same constraint
+ * before giving up, or the channel imports a module nobody wrote.
+ */
+export function matchModelName(name, modelNames) {
+  if (modelNames.includes(name)) return name;
+  const constrained = constrainModelName({ modelName: name });
+  return modelNames.includes(constrained) ? constrained : undefined;
+}
+
 /** Match an operation message to the Modelina-generated model name for its payload. */
 function resolveMessageModelName(message, modelNames) {
   const candidates = [message.id?.(), message.name?.()].filter(Boolean);
   for (const candidate of candidates) {
-    if (modelNames.includes(candidate)) return candidate;
+    const match = matchModelName(candidate, modelNames);
+    if (match) return match;
   }
   const payload = message.payload?.();
   const payloadId = payload?.id?.() ?? payload?.$id?.();
-  if (payloadId && modelNames.includes(payloadId)) return payloadId;
+  if (payloadId) {
+    const match = matchModelName(payloadId, modelNames);
+    if (match) return match;
+  }
   return candidates[0] ?? payloadId;
 }
 
@@ -644,7 +695,8 @@ export async function generateOne({
   );
   const payloadParsers = await generatePayloadParsers(
     documentJson,
-    path.join(absOutDir, "payloads")
+    path.join(absOutDir, "payloads"),
+    modelNames
   );
   await writeBarrel(absOutDir, modelNames, channels, payloadParsers);
 

@@ -1,0 +1,73 @@
+asyncapi: 3.0.0
+info:
+  title: Reserved Name Fixture
+  version: v1
+channels:
+  Import:
+    address: "imports"
+    x-actioncable-channel: "Widgets::ImportsChannel"
+    messages:
+      Import:
+        $ref: "#/components/messages/Import"
+      Wrapper:
+        $ref: "#/components/messages/Wrapper"
+      Interface:
+        $ref: "#/components/messages/Interface"
+operations:
+  receiveImport:
+    action: receive
+    channel:
+      $ref: "#/channels/Import"
+    messages:
+      - $ref: "#/channels/Import/messages/Import"
+      - $ref: "#/channels/Import/messages/Wrapper"
+      - $ref: "#/channels/Import/messages/Interface"
+components:
+  schemas:
+    Import:
+      type: object
+      properties:
+        id:
+          type: string
+        payload:
+          type: string
+          contentMediaType: application/json
+          contentSchema:
+            $ref: "#/components/schemas/Rendered"
+      required: [id]
+    Wrapper:
+      type: object
+      properties:
+        body:
+          type: string
+          contentMediaType: application/json
+          contentSchema:
+            $ref: "#/components/schemas/Interface"
+      required: [body]
+    Interface:
+      type: object
+      properties:
+        marker:
+          type: string
+        nested:
+          type: object
+          properties:
+            deep:
+              type: string
+      required: [marker]
+    Rendered:
+      type: object
+      properties:
+        renderedAt:
+          type: string
+      required: [renderedAt]
+  messages:
+    Import:
+      payload:
+        $ref: "#/components/schemas/Import"
+    Wrapper:
+      payload:
+        $ref: "#/components/schemas/Wrapper"
+    Interface:
+      payload:
+        $ref: "#/components/schemas/Interface"

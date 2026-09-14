@@ -14,6 +14,7 @@ import {
   nameNestedSchemas,
   renderPayloadParser,
   isRemoteInput,
+  matchModelName,
   renderChannelClass,
   renderComposable,
   stripConditionals,
@@ -22,6 +23,7 @@ import {
 
 const FIXTURE = join(import.meta.dirname, "fixtures", "cable_fixture.yaml");
 const SERVER_FIXTURE = join(import.meta.dirname, "fixtures", "server_param_fixture.yaml");
+const RESERVED_FIXTURE = join(import.meta.dirname, "fixtures", "reserved_name_fixture.yaml");
 
 /** Run the generator into a throwaway dir and hand the reader to `fn`. */
 async function withGenerated(opts, fn) {
@@ -110,6 +112,23 @@ test("tidyModelSource rewrites additionalProperties + type-only exports", () => 
   );
   assert.ok(tidied.includes("[key: string]: unknown;"));
   assert.ok(tidied.includes("export type { X };"));
+});
+
+test("tidyModelSource imports a sibling model for its type only", () => {
+  // Every model is type-only now that enums are unions — a value import of one
+  // is an error under `verbatimModuleSyntax`.
+  const tidied = tidyModelSource(
+    "import {Y} from './Y';\ninterface X {\n  y: Y;\n}\nexport { X };"
+  );
+  assert.ok(tidied.includes("import type {Y} from './Y';"));
+});
+
+test("matchModelName finds the model Modelina renamed", () => {
+  // A message named after a TypeScript keyword is emitted as `ReservedImport`,
+  // so matching the document's own name verbatim imports a module nobody wrote.
+  assert.equal(matchModelName("Import", ["ReservedImport"]), "ReservedImport");
+  assert.equal(matchModelName("Widget", ["Widget", "ReservedWidget"]), "Widget");
+  assert.equal(matchModelName("Widget", ["Gadget"]), undefined);
 });
 
 test("clientParamsType excludes server-derived params", () => {
@@ -222,6 +241,14 @@ test("vue preset: snake_case types, portable class, seam only in runtime", async
     assert.ok(message.includes("widget_id: string;"));
     assert.ok(message.includes("status: string;"));
     assert.ok(!message.includes("'failed'"));
+
+    const action = read("models/WidgetActionEnum.ts");
+    // A union, not a TypeScript `enum`: an enum member is nominal and would not
+    // be assignable to the literal union an OpenAPI client writes for the same
+    // component.
+    assert.ok(action.includes('type WidgetActionEnum = "build" | "tear_down";'));
+    assert.ok(!/\benum\s+WidgetActionEnum/.test(action));
+    assert.ok(message.includes("import type {WidgetActionEnum}"));
 
     const channel = read("channels/WidgetStatusChannel.ts");
     assert.ok(channel.includes('import { Channel } from "@anycable/core";'));
@@ -437,6 +464,49 @@ test("renderPayloadParser guards an optional payload and casts a required one", 
   });
   assert.match(required, /export function parseMsgPayload\(message: Msg\): Rendered\b/);
   assert.doesNotMatch(required, /=== undefined/);
+});
+
+test("a message named after a TypeScript keyword reaches its renamed model", async () => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
+    const channel = read("channels/ImportChannel.ts");
+    assert.ok(
+      channel.includes('import type { ReservedImport } from "../models/ReservedImport";')
+    );
+    assert.ok(channel.includes("ReservedImport | Wrapper | ReservedInterface"));
+  });
+});
+
+test("a payload parser keeps its message name and imports the renamed model", async () => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
+    // The function is the export a consumer imports: naming it after the model
+    // would move `parseImportPayload` to `parseReservedImportPayload`.
+    const parser = read("payloads/parseImportPayload.ts");
+    assert.ok(parser.includes("export function parseImportPayload(message: ReservedImport)"));
+    assert.ok(parser.includes("import type {ReservedImport} from '../models/ReservedImport';"));
+  });
+});
+
+test("a contentSchema leaves a component the message pass already emitted alone", async () => {
+  await withGenerated({ input: RESERVED_FIXTURE }, (read) => {
+    // `Interface` is emitted as `ReservedInterface`, so matching the document's
+    // own name against the emitted ones would miss it and overwrite the model
+    // with a second reading of the same component.
+    assert.ok(!read("index.ts").includes("models/Nested"));
+    assert.ok(read("models/ReservedInterface.ts").includes("marker: string;"));
+  });
+});
+
+test("renderPayloadParser names the function after the message, not the model", () => {
+  const source = renderPayloadParser({
+    message: "Import",
+    property: "payload",
+    component: "Rendered",
+    required: true,
+    messageModel: "ReservedImport",
+  });
+
+  assert.match(source, /export function parseImportPayload\(message: ReservedImport\)/);
+  assert.match(source, /import type \{ReservedImport\} from '\.\.\/models\/ReservedImport';/);
 });
 
 test("generateOne emits models and a parser for a contentSchema payload", async () => {

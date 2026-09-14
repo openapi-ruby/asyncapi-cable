@@ -33,6 +33,10 @@ export function isRemoteInput(input: string): boolean;
 export function stripConditionals<T extends AsyncapiDocumentJson>(json: T): T;
 export function dedupeUnions(source: string): string;
 export function tidyModelSource(source: string): string;
+export function matchModelName(
+  name: string,
+  modelNames: string[]
+): string | undefined;
 export function clientParamsType(channelJson: ChannelParametersJson): string;
 
 export interface ContentSchemaTarget {
@@ -57,7 +61,12 @@ export function contentSchemaDocument(
 ): Record<string, unknown> | undefined;
 export function nameNestedSchemas<T>(node: T): T;
 export function renderPayloadParser(
-  target: Omit<ContentSchemaTarget, "schema">
+  target: Omit<ContentSchemaTarget, "schema"> & {
+    /** Model `message` was emitted as, when Modelina renamed it. */
+    messageModel?: string;
+    /** Model `component` was emitted as, when Modelina renamed it. */
+    componentModel?: string;
+  }
 ): string;
 
 export function renderChannelClass(opts: {
